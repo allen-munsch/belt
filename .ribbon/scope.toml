@@ -1,0 +1,6 @@
+# Agent scope enforcement for the ribbon project
+# Ribbon owns everything in this repo (it IS the repo)
+
+[agents.ribbon]
+paths = ["/**"]
+docker_services = ["ribbon"]

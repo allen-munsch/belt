@@ -1,0 +1,15 @@
+# Ribbon configuration — dogfooding ribbon for its own development
+# See: https://github.com/allen-munsch/ribbon
+
+log_path = "events.ndjson"
+
+# Known agents in the ribbon project
+agents = ["ribbon"]
+
+# Git roots for commit verification
+[git_roots]
+ribbon = "."
+
+# Remote and branch for verification
+git_remote = "origin"
+git_branch = "main"

@@ -1,0 +1,52 @@
+[package]
+name = "ribbon"
+version = "0.4.2"
+edition = "2021"
+rust-version = "1.91"
+description = "Agent communication ribbon — structured ndjson event log with A2A bridging, markdown reification, and git verification. File-first, schema-validated, human+machine readable."
+license = "AGPL-3.0-only"
+repository = "https://github.com/allen-munsch/ribbon"
+keywords = ["agent", "a2a", "ndjson", "communication", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# Core (always)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+thiserror = "2.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+toml = "0.8"
+
+# Scope matching
+glob = "0.3"
+
+# Optional features
+brotli = { version = "7", optional = true }
+notify = { version = "7", optional = true }
+reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+
+[features]
+default = []
+# Full feature set for production use
+full = ["compress", "watch", "bridge"]
+compress = ["brotli"]
+watch = ["notify", "tokio/rt", "tokio/macros"]
+bridge = ["reqwest", "tokio/rt", "tokio/macros", "uuid"]
+
+[[bin]]
+name = "ribbon"
+path = "src/main.rs"
+
+[lib]
+name = "ribbon"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "time"] }

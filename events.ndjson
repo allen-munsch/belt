@@ -1,0 +1,14 @@
+{"ts":"2026-05-14T05:58:31.526029980Z","agent":"ribbon","event":"submitted","task":"bootstrap agent-ribbon","msg":"Initializing .pi/agents/, .ribbon/config.toml, .ribbon/scope.toml, and events.ndjson for ribbon submodule","priority":"HIGH"}
+{"ts":"2026-05-14T05:58:40.392775822Z","agent":"ribbon","event":"working","task":"bootstrap agent-ribbon"}
+{"ts":"2026-05-14T05:58:40.397936812Z","agent":"ribbon","event":"committed","task":"bootstrap agent-ribbon","commit":"683ede37e9fa747ead01c875f45c634cb7d39bf8","msg":"Created .pi/agents/ribbon-engine.md, .ribbon/config.toml, .ribbon/scope.toml"}
+{"ts":"2026-05-14T05:58:40.407802622Z","agent":"ribbon","event":"completed","task":"bootstrap agent-ribbon","commit":"683ede37e9fa747ead01c875f45c634cb7d39bf8","msg":"Agent-ribbon bootstrapped: 1 agent definition, 2 config files, events log initialized","tests":3,"failures":0}
+{"ts":"2026-05-14T22:54:02.854718070Z","agent":"ribbon","event":"submitted","task":"rebrand belt to ribbon","msg":"Rebranding belt→ribbon: package name, binary, types (RibbonEvent, RibbonConfig), config dir (.ribbon/), all docs and agent definitions","priority":"HIGH"}
+{"ts":"2026-05-14T22:54:02.857877704Z","agent":"ribbon","event":"working","task":"rebrand belt to ribbon"}
+{"ts":"2026-05-14T22:54:02.864585101Z","agent":"ribbon","event":"committed","task":"rebrand belt to ribbon","commit":"683ede37e9fa747ead01c875f45c634cb7d39bf8","msg":"All 25 tests pass, ribbon whoami returns ribbon agent"}
+{"ts":"2026-05-14T22:54:02.870391183Z","agent":"ribbon","event":"completed","task":"rebrand belt to ribbon","commit":"683ede37e9fa747ead01c875f45c634cb7d39bf8","msg":"Complete rebrand: ribbon init, ribbon send, ribbon status, ribbon whoami all working","tests":25,"failures":0}
+{"ts":"2026-05-14T23:07:14.297764011Z","agent":"ribbon","event":"submitted","task":"v0.3.1 release","priority":"HIGH"}
+{"ts":"2026-05-14T23:07:14.300256066Z","agent":"ribbon","event":"working","task":"v0.3.1 release"}
+{"ts":"2026-05-14T23:07:14.302693017Z","agent":"ribbon","event":"committed","task":"v0.3.1 release","commit":"6686c1e"}
+{"ts":"2026-05-14T23:07:14.305106516Z","agent":"ribbon","event":"completed","task":"v0.3.1 release","commit":"6686c1e","msg":"clippy clean, repo renamed to ribbon","tests":25,"failures":0}
+{"ts":"2026-05-15T04:45:51.497987965Z","agent":"ribbon","event":"submitted","task":"fix 4 bugs: orphan DB, name mismatch, pi dispatch visibility, submodule CWD scoping","priority":"HIGH"}
+{"ts":"2026-05-15T04:46:06.436228661Z","agent":"ribbon","event":"working","task":"fix 4 bugs: orphan DB, name mismatch, pi dispatch visibility, submodule CWD scoping"}
