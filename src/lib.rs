@@ -67,6 +67,6 @@ pub use event::{state_machine, EventType, RibbonEvent, StateMachine, Transition}
 pub use render::{render, RenderFormat, RenderOpts};
 pub use store::{
     agent_statuses, append_event, find_previous_state, read_events, AgentStatus, EventFilter,
-    StoreError,
+    PreviousStateResult, StoreError,
 };
 pub use verify::{verify_events, verify_report, GitRoots, VerifyResult};

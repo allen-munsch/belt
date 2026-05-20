@@ -71,6 +71,11 @@ pub struct RibbonEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking: Option<bool>,
 
+    /// Ribbon crate version that created this event.
+    /// Set automatically. Enables forward migration when the event schema changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
     /// Extension fields — arbitrary key-value pairs for project-specific data.
     /// Example: `{"branch": "feat/grpc", "pr": "https://..."}`
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -259,6 +264,12 @@ impl StateMachine {
         // ── From submitted ──
         sm.add(
             Some(Submitted),
+            Submitted,
+            &[],
+            "Task amended. The new task text replaces the previous one. Next: `ribbon send working --task \"...\"` to claim this task.",
+        );
+        sm.add(
+            Some(Submitted),
             Working,
             &[],
             "Next: work on the task, then `ribbon send committed --commit <SHA>` when code is ready.",
@@ -402,9 +413,14 @@ impl StateMachine {
         // From terminal states, only submitted (new task) is allowed
         if let Some(ps) = prev_state {
             if ps.is_terminal() {
+                let task_hint = if ps == &EventType::Completed {
+                    "This task is already completed. "
+                } else {
+                    "This task has already failed. "
+                };
                 return Err(format!(
-                    "Cannot transition from terminal state '{}'.\n\n  HINT: Create a new task with `ribbon send submitted --task \"...\"` to start fresh.\n  HINT: Use `ribbon status` to see all completed/failed tasks.",
-                    ps.state_name()
+                    "{}You are in '{}' state (terminal).\n\n  To start a new task: ribbon send submitted --task \"new task description\" --agent <agent>\n  To see all tasks: ribbon status\n  To review history: ribbon query --agent <agent>",
+                    task_hint, ps.state_name()
                 ));
             }
         }
@@ -424,20 +440,20 @@ impl StateMachine {
         let to_name = event.state_name();
 
         let mut hints = format!(
-            "Invalid transition: '{}' → '{}'.\n",
+            "You are in '{}' state, but tried to go to '{}'.\n\n  This is not allowed.\n",
             from_name, to_name
         );
 
         // Show valid next steps
         if let Some(valid) = self.transitions.get(&key) {
             if valid.is_empty() {
-                hints.push_str("\n  No further transitions possible from this state.\n");
-                hints.push_str("  HINT: Create a new task with `ribbon send submitted --task \"...\"`.\n");
+                hints.push_str("  This state has no further transitions.\n");
+                hints.push_str("  Create a new task: ribbon send submitted --task \"...\" --agent <agent>\n");
             } else {
-                hints.push_str("\n  Valid next steps:\n");
+                hints.push_str("  What you CAN do from here:\n");
                 for t in valid {
                     let label = t.event.label().to_lowercase();
-                    hints.push_str(&format!("    ribbon send {} --task \"...\"", label));
+                    hints.push_str(&format!("    ribbon send {} --agent <agent> --task \"...\"", label));
                     if !t.required_fields.is_empty() {
                         hints.push_str(&format!(
                             " {}",
@@ -452,11 +468,11 @@ impl StateMachine {
                 }
             }
         } else {
-            hints.push_str("\n  HINT: Check `ribbon status` to see your current state.\n");
-            hints.push_str("  HINT: Use `--force` to bypass validation if you're sure.\n");
+            hints.push_str("  To see current state: ribbon status\n");
+            hints.push_str("  To review history: ribbon query --agent <agent>\n");
         }
 
-        hints.push_str("\n  HINT: Use `--force` to bypass validation in emergencies.\n");
+        hints.push_str("\n  Run `ribbon status` to see your current state and active tasks.\n");
 
         Err(hints)
     }
@@ -521,8 +537,11 @@ pub fn state_machine() -> StateMachine {
     StateMachine::new()
 }
 
+/// Current ribbon crate version — embedded in every event for forward compatibility.
+pub const RIBBON_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 impl RibbonEvent {
-    /// Create a new event with current timestamp.
+    /// Create a new event with current timestamp and version.
     pub fn new(agent: impl Into<String>, event_type: EventType) -> Self {
         RibbonEvent {
             ts: Utc::now(),
@@ -535,6 +554,7 @@ impl RibbonEvent {
             failures: None,
             priority: None,
             blocking: None,
+            version: Some(RIBBON_VERSION.to_string()),
             ext: HashMap::new(),
         }
     }

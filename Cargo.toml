@@ -1,6 +1,6 @@
 [package]
 name = "ribbon"
-version = "0.3.1"
+version = "0.4.2"
 edition = "2021"
 rust-version = "1.91"
 description = "Agent communication ribbon — structured ndjson event log with A2A bridging, markdown reification, and git verification. File-first, schema-validated, human+machine readable."

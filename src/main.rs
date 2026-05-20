@@ -94,6 +94,12 @@ enum Commands {
     )]
     Scope(ScopeArgs),
 
+    /// Print the working directory this agent should cd into
+    #[command(
+        long_about = "Print the directory where this agent should work.\n\nResolves your agent identity from .ribbon/scope.toml and prints the\ngit root path (or first owned path). Pipe into cd:\n\n  cd $(ribbon cd)\n\nUse this at the start of every agent session to ensure you're in the\nright directory with the right events.ndjson."
+    )]
+    Cd(CdArgs),
+
     /// Pack the event log (Brotli compress)
     Pack(PackArgs),
 
@@ -142,8 +148,11 @@ struct SendArgs {
     #[arg(short = 'B', long, action = ArgAction::SetTrue, default_value = "false")]
     blocking: bool,
 
-    /// Force the event — bypass state machine validation (emergency use only)
-    #[arg(short = 'F', long, action = ArgAction::SetTrue, default_value = "false")]
+    /// DANGER: Bypass state machine validation. This orphans the task —
+    /// state transitions will break and the task will appear stuck.
+    /// Only use when you have exhausted all other options and understand
+    /// that the event log will be inconsistent.
+    #[arg(short = 'F', long, action = ArgAction::SetTrue, default_value = "false", hide_short_help = true)]
     force: bool,
 }
 
@@ -165,6 +174,11 @@ fn cmd_send(args: SendArgs, log_path: &std::path::Path, config: &RibbonConfig) -
     )?;
 
     // ── State machine validation ──────────────────────────────────────────
+    // Track the canonical task string (from the matched event) for consistency
+    let mut canonical_task: Option<String> = None;
+    // Track previous state so we can detect self-loops (task amendment)
+    let mut prev_state: Option<EventType> = None;
+
     if !args.force && event_type != EventType::Note {
         // Load existing events to find previous state for this agent+task
         let events = match read_events(log_path) {
@@ -173,11 +187,17 @@ fn cmd_send(args: SendArgs, log_path: &std::path::Path, config: &RibbonConfig) -
             Err(e) => return Err(e.into()),
         };
 
-        let prev_state = if let Some(ref task) = args.task {
-            find_previous_state(&events, &args.agent, task)
+        let (ps, matched_task) = if let Some(ref task) = args.task {
+            match find_previous_state(&events, &args.agent, task) {
+                Some((et, canonical)) => (Some(et), canonical),
+                None => (None, None),
+            }
         } else {
-            None
+            (None, None)
         };
+
+        prev_state = ps;
+        canonical_task = matched_task;
 
         let sm = state_machine();
         match sm.validate(prev_state.as_ref(), &event_type) {
@@ -189,15 +209,27 @@ fn cmd_send(args: SendArgs, log_path: &std::path::Path, config: &RibbonConfig) -
             }
         }
     } else if args.force && event_type != EventType::Note {
-        eprintln!("  ⚠️  State machine bypassed (--force).");
+        eprintln!("  ⚠️  STATE MACHINE BYPASSED. The task is now orphaned — subsequent");
+        eprintln!("  ⚠️  state transitions will likely fail. Fix the root cause instead.");
     }
 
     let emoji = event_type.emoji();
     let label = event_type.label();
 
-    let mut event = RibbonEvent::new(&args.agent, event_type);
+    let mut event = RibbonEvent::new(&args.agent, event_type.clone());
 
-    if let Some(task) = args.task {
+    // Normalize task: for self-loops (e.g. submitted→submitted to amend),
+    // use the new task text; otherwise preserve the canonical task for consistency
+    let task_str = if prev_state.as_ref() == Some(&event_type) {
+        // Self-loop: agent is amending — use the new task text
+        args.task.map(|t| t.trim().to_string()).or(canonical_task)
+    } else {
+        canonical_task.or(args.task.map(|t| t.trim().to_string()))
+    };
+    if let Some(task) = task_str {
+        if task.is_empty() {
+            anyhow::bail!("Task cannot be empty (after trimming whitespace).");
+        }
         event = event.with_task(task);
     }
     if let Some(commit) = args.commit {
@@ -254,6 +286,11 @@ fn cmd_status(args: StatusArgs, log_path: &std::path::Path) -> Result<()> {
             return Ok(());
         }
 
+        // Show project root so agents know their context
+        if let Ok(cwd) = std::env::current_dir() {
+            println!("project: {}", cwd.display());
+        }
+        println!();
         println!(
             "{:<16} {:<12} {:<10} {:<6} {:<6} ACTIVE TASK",
             "AGENT", "STATE", "COMMIT", "DONE", "FAIL"
@@ -298,6 +335,19 @@ fn cmd_status(args: StatusArgs, log_path: &std::path::Path) -> Result<()> {
             }
             if let Some(ref msg) = s.hitl_request {
                 println!("  HITL: {}", msg);
+            }
+            // Show what the agent can do next
+            if !s.next_actions.is_empty() {
+                let task_hint = s.active_task.as_deref().unwrap_or("...");
+                let task_short: String = if task_hint.len() > 60 {
+                    format!("{}...", &task_hint[..57])
+                } else {
+                    task_hint.to_string()
+                };
+                for action in &s.next_actions {
+                    let req = if action == "committed" { " --commit <SHA>" } else if action == "completed" { " --tests N --failures 0" } else { "" };
+                    println!("  → ribbon send {} --agent {} --task \"{}\"{}", action, s.agent, task_short, req);
+                }
             }
         }
     }
@@ -536,6 +586,85 @@ struct WhoamiArgs {
     /// Output as JSON
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Parser)]
+struct CdArgs {
+    /// Agent name (if auto-detection doesn't work from cwd)
+    #[arg(short, long)]
+    agent: Option<String>,
+
+    /// Working directory to resolve from (default: current directory)
+    #[arg(long, env = "PWD")]
+    cwd: Option<PathBuf>,
+}
+
+fn cmd_cd(args: CdArgs, config: &RibbonConfig) -> Result<()> {
+    let cwd = args.cwd.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    });
+
+    let (scope_config, project_root) = match ScopeConfig::discover_from(Some(&cwd))? {
+        Some((sc, pr)) => (sc, pr),
+        None => {
+            anyhow::bail!(
+                "No .ribbon/scope.toml found. Create one to define agent scopes."
+            );
+        }
+    };
+
+    // If --agent specified, use that directly
+    let target = if let Some(ref agent_name) = args.agent {
+        match scope_config.agents.get(agent_name) {
+            Some(entry) => {
+                let git_root = config.git_roots.get(agent_name).cloned();
+                let first_path = entry.paths.first().map(|p| {
+                    let base = p.trim_end_matches('/');
+                    let base = if let Some(pos) = base.find('*') { &base[..pos] } else { base };
+                    project_root.join(base)
+                });
+                git_root.or(first_path).unwrap_or_else(|| project_root.clone())
+            }
+            None => anyhow::bail!(
+                "Unknown agent: {agent_name}. Known: {}",
+                scope_config.agents.keys().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        }
+    } else {
+        // Auto-detect from cwd
+        match scope_config.whoami(&cwd, &project_root, config) {
+            Some(result) => {
+                result.git_root.unwrap_or_else(|| {
+                    result.paths.first().map(|p| {
+                        let base = p.trim_end_matches('/');
+                        let base = if let Some(pos) = base.find('*') { &base[..pos] } else { base };
+                        project_root.join(base)
+                    }).unwrap_or_else(|| project_root.clone())
+                })
+            }
+            None => {
+                // List all agents and their paths so the agent can pick
+                eprintln!("Could not auto-detect agent from: {}", cwd.display());
+                eprintln!();
+                eprintln!("Available agents:");
+                for (name, entry) in &scope_config.agents {
+                    let path = config.git_roots.get(name).cloned().or_else(|| {
+                        entry.paths.first().map(|p| {
+                            let base = p.trim_end_matches('/');
+                            let base = if let Some(pos) = base.find('*') { &base[..pos] } else { base };
+                            project_root.join(base)
+                        })
+                    });
+                    eprintln!("  ribbon cd --agent {}{}", name,
+                        path.map(|p| format!("  # → {}", p.display())).unwrap_or_default());
+                }
+                std::process::exit(1);
+            }
+        }
+    };
+
+    println!("{}", target.display());
+    Ok(())
 }
 
 #[derive(Parser)]
@@ -916,6 +1045,7 @@ fn main() -> Result<()> {
         Commands::Verify(args) => cmd_verify(args, &log_path, config)?,
         Commands::Whoami(args) => cmd_whoami(args, config)?,
         Commands::Scope(args) => cmd_scope(args, config)?,
+        Commands::Cd(args) => cmd_cd(args, config)?,
         Commands::Pack(args) => pack_handler(args, &log_path)?,
         Commands::Unpack(args) => unpack_handler(args, &log_path)?,
     }

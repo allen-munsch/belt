@@ -198,6 +198,9 @@ pub struct AgentStatus {
     pub sudo_request: Option<String>,
     /// If HITL pending, what's needed (from msg).
     pub hitl_request: Option<String>,
+    /// Valid next event types the agent can transition to.
+    /// E.g. for "submitted": ["working", "failed"]. Empty for terminal states.
+    pub next_actions: Vec<String>,
 }
 
 /// Compute current status for all agents found in the event log.
@@ -296,6 +299,26 @@ pub fn agent_statuses(events: &[RibbonEvent]) -> Vec<AgentStatus> {
                 }
             }
 
+            // Compute valid next actions from this state
+            let prev_et = match state {
+                "submitted" => Some(EventType::Submitted),
+                "working" => Some(EventType::Working),
+                "committed" => Some(EventType::Committed),
+                "completed" => Some(EventType::Completed),
+                "failed" => Some(EventType::Failed),
+                "blocked" => Some(EventType::Blocked),
+                "confused" => Some(EventType::Confused),
+                "sudo_pending" => Some(EventType::Sudo),
+                "hitl_pending" => Some(EventType::Hitl),
+                _ => None,
+            };
+            let sm = crate::event::state_machine();
+            let next_actions: Vec<String> = sm
+                .suggest(prev_et.as_ref())
+                .into_iter()
+                .map(|(et, _)| et.label().to_lowercase())
+                .collect();
+
             AgentStatus {
                 agent,
                 state: state.to_string(),
@@ -308,6 +331,7 @@ pub fn agent_statuses(events: &[RibbonEvent]) -> Vec<AgentStatus> {
                 confused_about,
                 sudo_request,
                 hitl_request,
+                next_actions,
             }
         })
         .collect();
@@ -316,18 +340,108 @@ pub fn agent_statuses(events: &[RibbonEvent]) -> Vec<AgentStatus> {
     statuses
 }
 
+/// Normalize a task string for fuzzy matching: trim whitespace and lowercase.
+fn normalize_task(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// Result of finding a previous state — the event type and the canonical task string.
+pub type PreviousStateResult = (EventType, Option<String>);
+
 /// Find the previous non-note event for a specific agent+task combination.
-/// Returns the EventType of the last state-changing event, or None if this is a new task.
-pub fn find_previous_state(events: &[RibbonEvent], agent: &str, task: &str) -> Option<EventType> {
-    // Walk backwards through events for this agent+task
+///
+/// Matching is done in three stages:
+/// 1. **Exact match** after trimming (preferred — most precise)
+/// 2. **Fuzzy substring match** — either string contains the other (case-insensitive)
+/// 3. **Agent-wide fallback** — if the agent has exactly one active task, use that
+///
+/// Returns (EventType, canonical_task_string) of the last state-changing event,
+/// or None if this is a new task. The canonical task string is the one from the
+/// matched event — callers should use it for consistency in subsequent events.
+pub fn find_previous_state(events: &[RibbonEvent], agent: &str, task: &str) -> Option<PreviousStateResult> {
+    let query = normalize_task(task);
+
+    // Stage 1: Exact match after trim + lowercase
     for e in events.iter().rev() {
-        if e.agent == agent && e.task.as_deref() == Some(task) {
-            // Skip notes and responses (they don't change state)
-            if e.event_type != EventType::Note && !e.event_type.is_response() {
-                return Some(e.event_type.clone());
+        if e.agent == agent {
+            if let Some(ref t) = e.task {
+                if normalize_task(t) == query {
+                    if e.event_type != EventType::Note && !e.event_type.is_response() {
+                        return Some((e.event_type.clone(), e.task.clone()));
+                    }
+                }
             }
         }
     }
+
+    // Stage 2: Fuzzy substring match (case-insensitive)
+    for e in events.iter().rev() {
+        if e.agent == agent {
+            if let Some(ref t) = e.task {
+                let t_norm = normalize_task(t);
+                if t_norm.contains(&query) || query.contains(&t_norm) {
+                    if e.event_type != EventType::Note && !e.event_type.is_response() {
+                        eprintln!("  ℹ️  Matched task via fuzzy search: \"{}\"", t.trim());
+                        return Some((e.event_type.clone(), e.task.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Stage 3: Agent-wide fallback — exactly one unique active task for this agent
+    // First, collect tasks that have been terminated (completed/failed) so we can exclude them.
+    let mut terminated_tasks: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for e in events.iter() {
+        if e.agent == agent && e.event_type.is_terminal() {
+            if let Some(ref t) = e.task {
+                terminated_tasks.insert(normalize_task(t));
+            }
+        }
+    }
+
+    let active_states = [
+        EventType::Submitted, EventType::Working, EventType::Committed,
+        EventType::Blocked, EventType::Confused, EventType::Sudo, EventType::Hitl,
+    ];
+    let mut active_task_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut latest_event_type: Option<EventType> = None;
+    let mut latest_task: Option<String> = None;
+
+    for e in events.iter().rev() {
+        if e.agent == agent && active_states.contains(&e.event_type) {
+            if let Some(ref t) = e.task {
+                let t_norm = normalize_task(t);
+                // Skip tasks that have a terminal event later in the log
+                if terminated_tasks.contains(&t_norm) {
+                    continue;
+                }
+                active_task_names.insert(t_norm);
+                if latest_event_type.is_none() {
+                    latest_event_type = Some(e.event_type.clone());
+                    latest_task = e.task.clone();
+                }
+            }
+        }
+    }
+
+    if active_task_names.len() == 1 {
+        if let (Some(et), Some(lt)) = (&latest_event_type, &latest_task) {
+            eprintln!("  ℹ️  Matched agent's only active task: \"{}\"", lt.trim());
+            return Some((et.clone(), latest_task));
+        }
+    }
+
+    // No match found — print diagnostic
+    if !active_task_names.is_empty() {
+        eprintln!("  ⚠️  Could not match task \"{}\" for agent \"{}\".", task.trim(), agent);
+        eprintln!("  Active tasks for {}:", agent);
+        for name in &active_task_names {
+            eprintln!("    - {}", name);
+        }
+        eprintln!("  HINT: Copy the exact task name from above, or from `ribbon query --agent {}`.", agent);
+    }
+
     None
 }
 
@@ -402,5 +516,139 @@ mod tests {
         let zypi = statuses.iter().find(|s| s.agent == "zypi").unwrap();
         assert_eq!(zypi.state, "working");
         assert!(zypi.has_active);
+    }
+
+    // ── find_previous_state fuzzy matching tests ──────────────────────
+
+    #[test]
+    fn test_find_previous_state_exact_match() {
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("Build the gRPC layer"),
+        ];
+        let result = find_previous_state(&events, "agent", "Build the gRPC layer");
+        assert!(result.is_some());
+        let (et, canonical) = result.unwrap();
+        assert_eq!(et, EventType::Submitted);
+        assert_eq!(canonical.as_deref(), Some("Build the gRPC layer"));
+    }
+
+    #[test]
+    fn test_find_previous_state_whitespace_variation() {
+        // Extra whitespace in query should still match; returns canonical task
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("Build the gRPC layer"),
+        ];
+        let result = find_previous_state(&events, "agent", "  Build the gRPC layer  ");
+        assert!(result.is_some());
+        let (et, canonical) = result.unwrap();
+        assert_eq!(et, EventType::Submitted);
+        assert_eq!(canonical.as_deref(), Some("Build the gRPC layer"));
+    }
+
+    #[test]
+    fn test_find_previous_state_case_insensitive() {
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("Build the gRPC layer"),
+        ];
+        let result = find_previous_state(&events, "agent", "BUILD THE GRPC LAYER");
+        assert!(result.is_some());
+        let (et, canonical) = result.unwrap();
+        assert_eq!(et, EventType::Submitted);
+        assert_eq!(canonical.as_deref(), Some("Build the gRPC layer"));
+    }
+
+    #[test]
+    fn test_find_previous_state_substring_fallback() {
+        // Query is shorter substring of stored task; canonical task returned
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted)
+                .with_task("IMPLEMENT the PrismFlow formal IR types and type inference engine"),
+        ];
+        let result = find_previous_state(&events, "agent", "PrismFlow formal IR types");
+        assert!(result.is_some());
+        let (et, canonical) = result.unwrap();
+        assert_eq!(et, EventType::Submitted);
+        assert_eq!(canonical.as_deref(), Some("IMPLEMENT the PrismFlow formal IR types and type inference engine"));
+    }
+
+    #[test]
+    fn test_find_previous_state_substring_reverse() {
+        // Stored task is shorter, query is longer; canonical task returned
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Working).with_task("add dark mode"),
+        ];
+        let result = find_previous_state(&events, "agent", "add dark mode to the whole app");
+        assert!(result.is_some());
+        let (et, canonical) = result.unwrap();
+        assert_eq!(et, EventType::Working);
+        assert_eq!(canonical.as_deref(), Some("add dark mode"));
+    }
+
+    #[test]
+    fn test_find_previous_state_agent_wide_fallback() {
+        // No task match at all, but agent has exactly one active task
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("only task"),
+        ];
+        let result = find_previous_state(&events, "agent", "completely different task name");
+        assert!(result.is_some());
+        let (et, canonical) = result.unwrap();
+        assert_eq!(et, EventType::Submitted);
+        assert_eq!(canonical.as_deref(), Some("only task"));
+    }
+
+    #[test]
+    fn test_find_previous_state_no_match_multiple_tasks() {
+        // Agent has multiple active tasks — no fallback
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("task one"),
+            RibbonEvent::new("agent", EventType::Submitted).with_task("task two"),
+        ];
+        let result = find_previous_state(&events, "agent", "something else entirely");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_previous_state_new_task() {
+        let events: Vec<RibbonEvent> = vec![];
+        let result = find_previous_state(&events, "agent", "new task");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_previous_state_skips_notes() {
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("real work"),
+            RibbonEvent::new("agent", EventType::Note).with_task("real work").with_msg("observation"),
+        ];
+        // Should find Submitted, skipping the Note
+        let result = find_previous_state(&events, "agent", "real work");
+        assert!(result.is_some());
+        let (et, _) = result.unwrap();
+        assert_eq!(et, EventType::Submitted);
+    }
+
+    #[test]
+    fn test_find_previous_state_latest_active_state() {
+        // Multiple events for same task — return latest
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("work"),
+            RibbonEvent::new("agent", EventType::Working).with_task("work"),
+        ];
+        let result = find_previous_state(&events, "agent", "work");
+        assert!(result.is_some());
+        let (et, _) = result.unwrap();
+        assert_eq!(et, EventType::Working);
+    }
+
+    #[test]
+    fn test_find_previous_state_returns_canonical_task() {
+        // When fuzzy matched, the canonical task should be from the log
+        let events = vec![
+            RibbonEvent::new("agent", EventType::Submitted).with_task("Original Task Name"),
+        ];
+        let result = find_previous_state(&events, "agent", "original");
+        let (_, canonical) = result.unwrap();
+        assert_eq!(canonical.as_deref(), Some("Original Task Name"));
     }
 }
