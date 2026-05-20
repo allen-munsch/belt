@@ -174,10 +174,10 @@ impl EventType {
             EventType::Blocked => "blocked",
             EventType::Confused => "confused",
             EventType::Sudo => "sudo_pending",
-            EventType::SudoGranted => "idle",      // reverts to previous
-            EventType::SudoDenied => "idle",        // reverts to previous
+            EventType::SudoGranted => "idle", // reverts to previous
+            EventType::SudoDenied => "idle",  // reverts to previous
             EventType::Hitl => "hitl_pending",
-            EventType::HitlResolved => "idle",      // reverts to previous
+            EventType::HitlResolved => "idle", // reverts to previous
         }
     }
 
@@ -360,12 +360,7 @@ impl StateMachine {
         );
 
         // ── From confused ──
-        sm.add(
-            Some(Confused),
-            Working,
-            &[],
-            "Got clarity! Back to work.",
-        );
+        sm.add(Some(Confused), Working, &[], "Got clarity! Back to work.");
         sm.add(
             Some(Confused),
             Failed,
@@ -383,14 +378,11 @@ impl StateMachine {
         required_fields: &'static [&'static str],
         breadcrumb: &'static str,
     ) {
-        self.transitions
-            .entry(from)
-            .or_default()
-            .push(Transition {
-                event,
-                required_fields,
-                breadcrumb,
-            });
+        self.transitions.entry(from).or_default().push(Transition {
+            event,
+            required_fields,
+            breadcrumb,
+        });
     }
 
     /// Validate a proposed transition.
@@ -434,9 +426,7 @@ impl StateMachine {
         }
 
         // Invalid transition — build helpful error
-        let from_name = prev_state
-            .map(|s| s.state_name())
-            .unwrap_or("(new task)");
+        let from_name = prev_state.map(|s| s.state_name()).unwrap_or("(new task)");
         let to_name = event.state_name();
 
         let mut hints = format!(
@@ -448,12 +438,17 @@ impl StateMachine {
         if let Some(valid) = self.transitions.get(&key) {
             if valid.is_empty() {
                 hints.push_str("  This state has no further transitions.\n");
-                hints.push_str("  Create a new task: ribbon send submitted --task \"...\" --agent <agent>\n");
+                hints.push_str(
+                    "  Create a new task: ribbon send submitted --task \"...\" --agent <agent>\n",
+                );
             } else {
                 hints.push_str("  What you CAN do from here:\n");
                 for t in valid {
                     let label = t.event.label().to_lowercase();
-                    hints.push_str(&format!("    ribbon send {} --agent <agent> --task \"...\"", label));
+                    hints.push_str(&format!(
+                        "    ribbon send {} --agent <agent> --task \"...\"",
+                        label
+                    ));
                     if !t.required_fields.is_empty() {
                         hints.push_str(&format!(
                             " {}",
@@ -526,7 +521,10 @@ impl StateMachine {
             }
         }
         match self.transitions.get(&prev_state.cloned()) {
-            Some(valid) => valid.iter().map(|t| (t.event.clone(), t.breadcrumb)).collect(),
+            Some(valid) => valid
+                .iter()
+                .map(|t| (t.event.clone(), t.breadcrumb))
+                .collect(),
             None => vec![],
         }
     }
@@ -652,8 +650,8 @@ mod tests {
 
     #[test]
     fn test_minimal_event() {
-        let event =
-            RibbonEvent::new("human:alice", EventType::Note).with_msg("Thinking about architecture");
+        let event = RibbonEvent::new("human:alice", EventType::Note)
+            .with_msg("Thinking about architecture");
         let line = event.to_ndjson_line().unwrap();
         assert!(line.contains("human:alice"));
         assert!(line.contains("note"));

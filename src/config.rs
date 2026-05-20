@@ -260,14 +260,19 @@ impl ScopeConfig {
 
     /// Discover scope.toml by finding the project root (where .ribbon/ lives)
     /// and loading scope.toml from there.
-    pub fn discover_from(search_root: Option<&Path>) -> Result<Option<(Self, PathBuf)>, ConfigError> {
+    pub fn discover_from(
+        search_root: Option<&Path>,
+    ) -> Result<Option<(Self, PathBuf)>, ConfigError> {
         let ribbon_dir = find_ribbon_dir_from(search_root)?;
         match ribbon_dir {
             Some(ribbon_dir) => {
                 let scope_path = ribbon_dir.join("scope.toml");
                 if scope_path.exists() {
                     let config = Self::from_file(&scope_path)?;
-                    let project_root = ribbon_dir.parent().map(|p| p.to_path_buf()).unwrap_or(ribbon_dir);
+                    let project_root = ribbon_dir
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or(ribbon_dir);
                     Ok(Some((config, project_root)))
                 } else {
                     // scope.toml is optional — no scope info available
@@ -314,13 +319,12 @@ impl ScopeConfig {
                 };
 
                 // Check if cwd starts with the directory pattern
-                if cwd_str == dir_pattern
-                    || cwd_str.starts_with(&format!("{dir_pattern}/"))
-                {
+                if cwd_str == dir_pattern || cwd_str.starts_with(&format!("{dir_pattern}/")) {
                     // Also validate with glob for ** patterns
                     if pattern.ends_with("/**") {
                         if let Ok(matched) = glob::Pattern::new(&glob_pattern) {
-                            if matched.matches(&cwd_str) || matched.matches(&format!("{cwd_str}/")) {
+                            if matched.matches(&cwd_str) || matched.matches(&format!("{cwd_str}/"))
+                            {
                                 // Build peers list (all other agents and their paths)
                                 let peers: Vec<(String, Vec<String>)> = self
                                     .agents
@@ -345,7 +349,8 @@ impl ScopeConfig {
                         // Non-glob pattern: check prefix match with glob
                         let simple_pattern = format!("{dir_pattern}/**");
                         if let Ok(matched) = glob::Pattern::new(&simple_pattern) {
-                            if matched.matches(&cwd_str) || matched.matches(&format!("{cwd_str}/")) {
+                            if matched.matches(&cwd_str) || matched.matches(&format!("{cwd_str}/"))
+                            {
                                 let peers: Vec<(String, Vec<String>)> = self
                                     .agents
                                     .iter()
@@ -459,11 +464,7 @@ mod tests {
         git_roots.insert("mosaic".to_string(), PathBuf::from("submodules/mosaic"));
         git_roots.insert("zypi".to_string(), PathBuf::from("submodules/zypi"));
         RibbonConfig {
-            agents: vec![
-                "mosaic".to_string(),
-                "zypi".to_string(),
-                "weft".to_string(),
-            ],
+            agents: vec!["mosaic".to_string(), "zypi".to_string(), "weft".to_string()],
             git_roots,
             ..RibbonConfig::default()
         }

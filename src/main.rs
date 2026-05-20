@@ -1,12 +1,12 @@
 //! Ribbon CLI — command-line interface for the agent communication ribbon.
 
 use anyhow::{Context, Result};
+use clap::{ArgAction, Parser, Subcommand};
 use ribbon::{
     agent_statuses, append_event, find_previous_state, read_events, render, state_machine,
-    verify_events, verify_report, RibbonConfig, RibbonEvent, DiscoveredConfig, EventFilter, EventType,
-    GitRoots, RenderFormat, RenderOpts, ScopeConfig,
+    verify_events, verify_report, DiscoveredConfig, EventFilter, EventType, GitRoots, RenderFormat,
+    RenderOpts, RibbonConfig, RibbonEvent, ScopeConfig,
 };
-use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
 /// Ribbon — agent communication via structured ndjson event log.
@@ -162,7 +162,12 @@ fn cmd_send(args: SendArgs, log_path: &std::path::Path, config: &RibbonConfig) -
     // This catches typos (yas-mcp vs yas_mcp), prevents orphan tasks filed
     // under non-existent agent names, and enforces naming conventions.
     if !config.agents.is_empty() && !config.agents.contains(&args.agent) {
-        let valid = config.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(", ");
+        let valid = config
+            .agents
+            .iter()
+            .map(|a| a.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         anyhow::bail!(
             "Unknown agent \"{}\".\n\n  Valid agents (from .ribbon/config.toml): {valid}\n\n  HINT: Did you mean one of these? Check your spelling.\n  HINT: Run `ribbon whoami` to auto-discover your agent name from your current directory.\n  HINT: To add a new agent, edit .ribbon/config.toml and add it to the agents list.\n  HINT: Use `ribbon status` to see all known agents and their current state.",
             args.agent
@@ -345,8 +350,17 @@ fn cmd_status(args: StatusArgs, log_path: &std::path::Path) -> Result<()> {
                     task_hint.to_string()
                 };
                 for action in &s.next_actions {
-                    let req = if action == "committed" { " --commit <SHA>" } else if action == "completed" { " --tests N --failures 0" } else { "" };
-                    println!("  → ribbon send {} --agent {} --task \"{}\"{}", action, s.agent, task_short, req);
+                    let req = if action == "committed" {
+                        " --commit <SHA>"
+                    } else if action == "completed" {
+                        " --tests N --failures 0"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "  → ribbon send {} --agent {} --task \"{}\"{}",
+                        action, s.agent, task_short, req
+                    );
                 }
             }
         }
@@ -600,16 +614,14 @@ struct CdArgs {
 }
 
 fn cmd_cd(args: CdArgs, config: &RibbonConfig) -> Result<()> {
-    let cwd = args.cwd.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let cwd = args
+        .cwd
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     let (scope_config, project_root) = match ScopeConfig::discover_from(Some(&cwd))? {
         Some((sc, pr)) => (sc, pr),
         None => {
-            anyhow::bail!(
-                "No .ribbon/scope.toml found. Create one to define agent scopes."
-            );
+            anyhow::bail!("No .ribbon/scope.toml found. Create one to define agent scopes.");
         }
     };
 
@@ -620,28 +632,45 @@ fn cmd_cd(args: CdArgs, config: &RibbonConfig) -> Result<()> {
                 let git_root = config.git_roots.get(agent_name).cloned();
                 let first_path = entry.paths.first().map(|p| {
                     let base = p.trim_end_matches('/');
-                    let base = if let Some(pos) = base.find('*') { &base[..pos] } else { base };
+                    let base = if let Some(pos) = base.find('*') {
+                        &base[..pos]
+                    } else {
+                        base
+                    };
                     project_root.join(base)
                 });
-                git_root.or(first_path).unwrap_or_else(|| project_root.clone())
+                git_root
+                    .or(first_path)
+                    .unwrap_or_else(|| project_root.clone())
             }
             None => anyhow::bail!(
                 "Unknown agent: {agent_name}. Known: {}",
-                scope_config.agents.keys().cloned().collect::<Vec<_>>().join(", ")
+                scope_config
+                    .agents
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         }
     } else {
         // Auto-detect from cwd
         match scope_config.whoami(&cwd, &project_root, config) {
-            Some(result) => {
-                result.git_root.unwrap_or_else(|| {
-                    result.paths.first().map(|p| {
+            Some(result) => result.git_root.unwrap_or_else(|| {
+                result
+                    .paths
+                    .first()
+                    .map(|p| {
                         let base = p.trim_end_matches('/');
-                        let base = if let Some(pos) = base.find('*') { &base[..pos] } else { base };
+                        let base = if let Some(pos) = base.find('*') {
+                            &base[..pos]
+                        } else {
+                            base
+                        };
                         project_root.join(base)
-                    }).unwrap_or_else(|| project_root.clone())
-                })
-            }
+                    })
+                    .unwrap_or_else(|| project_root.clone())
+            }),
             None => {
                 // List all agents and their paths so the agent can pick
                 eprintln!("Could not auto-detect agent from: {}", cwd.display());
@@ -651,12 +680,20 @@ fn cmd_cd(args: CdArgs, config: &RibbonConfig) -> Result<()> {
                     let path = config.git_roots.get(name).cloned().or_else(|| {
                         entry.paths.first().map(|p| {
                             let base = p.trim_end_matches('/');
-                            let base = if let Some(pos) = base.find('*') { &base[..pos] } else { base };
+                            let base = if let Some(pos) = base.find('*') {
+                                &base[..pos]
+                            } else {
+                                base
+                            };
                             project_root.join(base)
                         })
                     });
-                    eprintln!("  ribbon cd --agent {}{}", name,
-                        path.map(|p| format!("  # → {}", p.display())).unwrap_or_default());
+                    eprintln!(
+                        "  ribbon cd --agent {}{}",
+                        name,
+                        path.map(|p| format!("  # → {}", p.display()))
+                            .unwrap_or_default()
+                    );
                 }
                 std::process::exit(1);
             }
@@ -683,9 +720,9 @@ struct ScopeArgs {
 }
 
 fn cmd_whoami(args: WhoamiArgs, config: &RibbonConfig) -> Result<()> {
-    let cwd = args.cwd.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let cwd = args
+        .cwd
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     // Discover scope.toml from project root
     let (scope_config, project_root) = match ScopeConfig::discover_from(Some(&cwd))? {
@@ -700,17 +737,20 @@ fn cmd_whoami(args: WhoamiArgs, config: &RibbonConfig) -> Result<()> {
     match scope_config.whoami(&cwd, &project_root, config) {
         Some(result) => {
             if args.json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "agent": result.agent,
-                    "paths": result.paths,
-                    "docker_services": result.docker_services,
-                    "git_root": result.git_root.as_ref().map(|p| p.display().to_string()),
-                    "project_root": result.project_root.display().to_string(),
-                    "cwd": cwd.display().to_string(),
-                    "peers": result.peers.iter().map(|(name, paths)| {
-                        serde_json::json!({"agent": name, "paths": paths})
-                    }).collect::<Vec<_>>(),
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "agent": result.agent,
+                        "paths": result.paths,
+                        "docker_services": result.docker_services,
+                        "git_root": result.git_root.as_ref().map(|p| p.display().to_string()),
+                        "project_root": result.project_root.display().to_string(),
+                        "cwd": cwd.display().to_string(),
+                        "peers": result.peers.iter().map(|(name, paths)| {
+                            serde_json::json!({"agent": name, "paths": paths})
+                        }).collect::<Vec<_>>(),
+                    }))?
+                );
             } else {
                 println!("Agent:     {}", result.agent);
                 println!("Scope:     {}", result.paths.join(", "));
@@ -758,7 +798,9 @@ fn cmd_scope(args: ScopeArgs, config: &RibbonConfig) -> Result<()> {
         let search_root = args.cwd.as_deref();
         match ScopeConfig::discover_from(search_root)? {
             Some((sc, pr)) => (sc, pr),
-            None => anyhow::bail!("No .ribbon/scope.toml found. Create one to define agent scopes."),
+            None => {
+                anyhow::bail!("No .ribbon/scope.toml found. Create one to define agent scopes.")
+            }
         }
     };
 
@@ -774,16 +816,19 @@ fn cmd_scope(args: ScopeArgs, config: &RibbonConfig) -> Result<()> {
                     .collect();
 
                 if args.json {
-                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "agent": agent_name,
-                        "paths": entry.paths,
-                        "docker_services": entry.docker_services,
-                        "git_root": git_root.as_ref().map(|p| p.display().to_string()),
-                        "project_root": project_root.display().to_string(),
-                        "peers": peers.iter().map(|(name, e)| {
-                            serde_json::json!({"agent": name, "paths": e.paths})
-                        }).collect::<Vec<_>>(),
-                    }))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "agent": agent_name,
+                            "paths": entry.paths,
+                            "docker_services": entry.docker_services,
+                            "git_root": git_root.as_ref().map(|p| p.display().to_string()),
+                            "project_root": project_root.display().to_string(),
+                            "peers": peers.iter().map(|(name, e)| {
+                                serde_json::json!({"agent": name, "paths": e.paths})
+                            }).collect::<Vec<_>>(),
+                        }))?
+                    );
                 } else {
                     println!("Agent:     {agent_name}");
                     println!("Scope:     {}", entry.paths.join(", "));
@@ -806,15 +851,20 @@ fn cmd_scope(args: ScopeArgs, config: &RibbonConfig) -> Result<()> {
             None => {
                 anyhow::bail!(
                     "Unknown agent: {agent_name}.\n\n  Known agents: {}",
-                    scope_config.agents.keys().cloned().collect::<Vec<_>>().join(", ")
+                    scope_config
+                        .agents
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
             }
         }
     } else {
         // No --agent: resolve from cwd (same as whoami)
-        let cwd = args.cwd.unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        let cwd = args
+            .cwd
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         match scope_config.whoami(&cwd, &project_root, config) {
             Some(_) => {
@@ -942,7 +992,9 @@ fn unpack_handler(args: UnpackArgs, log_path: &std::path::Path) -> Result<()> {
 
 #[cfg(not(feature = "compress"))]
 fn unpack_handler(_args: UnpackArgs, _log_path: &std::path::Path) -> Result<()> {
-    anyhow::bail!("Unpack is not available. Rebuild with: cargo install ribbon --features compress");
+    anyhow::bail!(
+        "Unpack is not available. Rebuild with: cargo install ribbon --features compress"
+    );
 }
 
 #[cfg_attr(not(feature = "compress"), allow(dead_code))]

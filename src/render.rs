@@ -4,7 +4,7 @@
 //! ndjson (100 bytes/event); `ribbon render` expands it to rich markdown for
 //! humans to read. The same events → different views depending on audience.
 
-use crate::event::{RibbonEvent, EventType};
+use crate::event::{EventType, RibbonEvent};
 
 /// Output format for rendering.
 #[derive(Debug, Clone, Copy, PartialEq)]

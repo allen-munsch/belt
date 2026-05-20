@@ -4,7 +4,7 @@
 //! actually exist on the remote origin. Prevents agents from claiming work
 //! that wasn't pushed.
 
-use crate::event::{RibbonEvent, EventType};
+use crate::event::{EventType, RibbonEvent};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
